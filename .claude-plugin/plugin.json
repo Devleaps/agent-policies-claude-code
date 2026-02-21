@@ -1,0 +1,13 @@
+{
+  "name": "agent-policies-claude-code",
+  "version": "1.0.0",
+  "description": "Forwards hook events to a policy server that can allow, deny, ask, or halt agent actions.",
+  "author": {
+    "name": "DevLeaps",
+    "url": "https://github.com/Devleaps"
+  },
+  "homepage": "https://github.com/Devleaps/agent-policies-claude-code",
+  "repository": "https://github.com/Devleaps/agent-policies-claude-code",
+  "keywords": ["policies", "security", "hooks"],
+  "hooks": "./hooks/hooks.json"
+}

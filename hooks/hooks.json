@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "matcher": "*",
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/client.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "matcher": "*",
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/client.js"
+          }
+        ]
+      }
+    ]
+  }
+}
