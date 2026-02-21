@@ -7,14 +7,8 @@ Policies allow your rules, often in natural language, to be expressed as policie
 ## Installation
 
 ```bash
-# Single session
-claude --plugin-dir github:Devleaps/agent-policies-claude-code
-
-# Permanent (user scope)
-claude plugin install github:Devleaps/agent-policies-claude-code
-
-# Project scope
-claude plugin install github:Devleaps/agent-policies-claude-code --scope project
+claude plugin marketplace add Devleaps/marketplace
+claude plugin install agent-policies@Devleaps-marketplace
 ```
 
 ## Architecture
