@@ -43,8 +43,11 @@ graph TB
   "server_url": "http://localhost:8338",
 
   // Policy bundles to activate. Default: ["universal"]
-  "bundles": ["universal", "python", "git"],
-
-  // What to do when the server returns no decision: "allow", "ask", "deny". Default: "ask"
-  "default_policy_behavior": "ask"
+  "bundles": ["universal", "python", "git"]
 }
+```
+
+> **Note:** The `default_policy_behavior` setting is obsolete and no longer has any effect. When the
+> server has no policy opinion on a tool use, the client now defers to Claude Code's own native
+> permission system. You can configure `allowedTools` in your Claude Code settings to build up a
+> personal permission baseline that the policy layer will not override.

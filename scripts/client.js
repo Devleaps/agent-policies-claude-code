@@ -67,7 +67,6 @@ async function main() {
   const config = loadConfig();
   const serverUrl = config.server_url || 'https://agent-policies.devleaps.nl';
   const bundles = config.bundles || ['universal'];
-  const defaultBehavior = config.default_policy_behavior || 'ask';
 
   let raw;
   try {
@@ -92,7 +91,7 @@ async function main() {
   }
 
   const endpoint = `/policy/claude-code/${hookEventName}`;
-  const body = { bundles, default_policy_behavior: defaultBehavior, event: payload };
+  const body = { bundles, event: payload };
 
   try {
     const { status, body: responseBody } = await post(serverUrl, endpoint, body);
@@ -104,6 +103,7 @@ async function main() {
     }
 
     process.stdout.write(responseBody);
+
     process.exit(0);
   } catch (e) {
     if (e.code === 'ECONNREFUSED') {
