@@ -8,6 +8,5 @@
   },
   "homepage": "https://github.com/Devleaps/agent-policies-claude-code",
   "repository": "https://github.com/Devleaps/agent-policies-claude-code",
-  "keywords": ["policies", "security", "hooks"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["policies", "security", "hooks"]
 }
