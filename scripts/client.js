@@ -94,6 +94,7 @@ async function main() {
   const body = {
     bundles,
     workspace_root: process.env.CLAUDE_PROJECT_DIR || null,
+    home: os.homedir(),
     event: payload,
   };
 
