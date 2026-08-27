@@ -1,0 +1,14 @@
+{
+  "name": "agent-policies-claude-code",
+  "version": "2.0.0",
+  "description": "Claude Code plugin that evaluates policies locally against a per-machine OPA daemon, syncing bundles from a central policy server.",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}
