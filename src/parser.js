@@ -6,7 +6,6 @@ const { Parser, Language } = require('web-tree-sitter');
 class ParseError extends Error {}
 
 // Commands known to take subcommands (git add, docker build, uv add, ...).
-// Ported from src/evaluation/parser.py's _is_likely_subcommand allowlist.
 const SUBCOMMAND_EXECUTABLES = new Set([
   'git', 'docker', 'podman', 'kubectl', 'terraform', 'terragrunt', 'gh',
   'az', 'gcloud', 'aws', 'npm', 'pip', 'uv', 'cargo', 'ruff', 'mypy',
@@ -45,8 +44,7 @@ function isLikelySubcommand(executable, word) {
 
 /**
  * Split a flat list of word tokens (after the executable) into
- * subcommand / arguments / flags / options, matching the heuristic in
- * src/evaluation/parser.py's BashCommandParser._parse_command_node.
+ * subcommand / arguments / flags / options.
  */
 function classifyWords(executable, words) {
   let subcommand = null;
@@ -228,9 +226,8 @@ function extractStatement(node, src) {
 }
 
 /**
- * Parse a bash command string into the same ParsedCommand shape produced by
- * src/evaluation/parser.py's BashCommandParser, so Rego policies written
- * against that input contract keep working unchanged.
+ * Parse a bash command string into the ParsedCommand shape that Rego
+ * policies expect as `input.parsed`.
  *
  * Per the "not understood by the parser = not allowed" principle, any
  * command tree-sitter cannot fully parse (a syntax error, or a top-level

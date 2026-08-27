@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// Equivalence runner: drives the real client.js (parser + local opa daemon)
+// Corpus runner: drives the real client.js (parser + local opa daemon)
 // against every case in agent-policies-server's declarative test corpus,
 // pointed at a real instance of that server's actual policies, and reports
-// a pass rate. This is the actual measurement of "does the new local path
-// agree with the old server-evaluated path."
+// a pass rate.
 
 const fs = require('node:fs');
 const os = require('node:os');

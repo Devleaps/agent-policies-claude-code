@@ -43,8 +43,7 @@ function readStdin() {
 
 /**
  * Recursively flatten a ParsedCommand's pipes/chained/process_substitutions
- * into one Rego input document per command, matching RegoEvaluator.evaluate's
- * recursive evaluation (rego.py:120-132) - a policy like "deny xargs" must
+ * into one Rego input document per command - a policy like "deny xargs" must
  * fire for `find . | xargs rm` even though xargs is a piped command, not the
  * top-level executable, so every command in the chain needs its own query.
  */
@@ -67,9 +66,8 @@ function flattenCommandsToInputs(parsed, sharedEventFields, workspaceRoot, cwd, 
 
 /**
  * Build the Rego input document(s) for one tool-use event. Returns null for
- * tools/events with no policy relevance (mirrors the server's evaluate_*_rules
- * functions each returning early for non-matching tool_name), or an array of
- * input documents to query (more than one for piped/chained Bash commands).
+ * tools/events with no policy relevance, or an array of input documents to
+ * query (more than one for piped/chained Bash commands).
  */
 async function buildInputDocuments(payload, context) {
   const toolName = payload.tool_name;
@@ -86,9 +84,7 @@ async function buildInputDocuments(payload, context) {
     } catch (err) {
       if (err instanceof ParseError) {
         // "Not understood by the parser = not allowed": an unparseable
-        // command must DENY, not silently pass through. This is a
-        // deliberate hardening vs. the old server, which caught ParseError
-        // and yielded no decision at all (handlers.py:129-130).
+        // command must DENY, not silently pass through.
         return { forcedDenyReason: `Command could not be parsed: ${err.message}` };
       }
       throw err;

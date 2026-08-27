@@ -1,8 +1,6 @@
 'use strict';
 
-// Ports the deleted RegoEvaluator._fetch_pypi_metadata (agent-policies-server,
-// src/evaluation/rego.py, removed in the server-side-evaluation cutover) as a
-// client-side "pypi_metadata" resolver for the incomplete/require multi-pass
+// Client-side "pypi_metadata" resolver for the incomplete/require multi-pass
 // protocol (see policies/python_pip/pip_install.rego and
 // policies/python_uv/uv_commands.rego).
 
@@ -18,8 +16,7 @@ const FETCH_TIMEOUT_MS = 5000;
 /**
  * GET https://pypi.org/pypi/{package}/json and return the raw parsed body,
  * or null on any failure (package not found, network error, timeout,
- * malformed JSON) - mirrors the Python original's blanket except-and-return-
- * None behavior; the caller can't distinguish failure reasons and isn't
+ * malformed JSON) - the caller can't distinguish failure reasons and isn't
  * meant to (the Rego side only needs "attempted, got nothing" vs "got data").
  */
 function fetchPypiJson(packageName) {
@@ -52,8 +49,7 @@ function fetchPypiJson(packageName) {
 /**
  * Extract {name, age_days, first_version, first_upload_date} from a PyPI
  * JSON API response, using the OLDEST upload across every release (not just
- * the first key in `releases`, which is not guaranteed to be chronological) -
- * exactly mirrors the deleted Python implementation's loop.
+ * the first key in `releases`, which is not guaranteed to be chronological).
  */
 function extractMetadata(packageName, pypiJson) {
   if (!pypiJson || typeof pypiJson !== 'object') return null;
