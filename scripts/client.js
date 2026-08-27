@@ -8,6 +8,7 @@ const os = require('os');
 const { parseCommand, ParseError } = require('../src/parser');
 const { ensureDaemon, requestOverSocket, socketPathFor } = require('../src/daemon');
 const { mapToPreToolUseOutput, mapToPostToolUseOutput } = require('../src/decide');
+const { buildResolvedPaths } = require('../src/paths');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -40,13 +41,39 @@ function readStdin() {
 // ── Input document construction ──────────────────────────────────────────────
 
 /**
- * Build the Rego input document for one tool-use event. Returns null for
- * tools/events with no policy relevance (mirrors the server's evaluate_*_rules
- * functions each returning early for non-matching tool_name).
+ * Recursively flatten a ParsedCommand's pipes/chained/process_substitutions
+ * into one Rego input document per command, matching RegoEvaluator.evaluate's
+ * recursive evaluation (rego.py:120-132) - a policy like "deny xargs" must
+ * fire for `find . | xargs rm` even though xargs is a piped command, not the
+ * top-level executable, so every command in the chain needs its own query.
  */
-async function buildInputDocument(payload) {
+function flattenCommandsToInputs(parsed, sharedEventFields, workspaceRoot, cwd, home) {
+  const resolvedPaths = buildResolvedPaths(parsed, workspaceRoot, cwd, home);
+  const inputs = [
+    {
+      event: sharedEventFields,
+      parsed: parsedCommandToRegoInput(parsed),
+      resolved_paths: resolvedPaths,
+    },
+  ];
+
+  for (const nested of [...parsed.pipes, ...parsed.chained, ...parsed.process_substitutions]) {
+    inputs.push(...flattenCommandsToInputs(nested, sharedEventFields, workspaceRoot, cwd, home));
+  }
+
+  return inputs;
+}
+
+/**
+ * Build the Rego input document(s) for one tool-use event. Returns null for
+ * tools/events with no policy relevance (mirrors the server's evaluate_*_rules
+ * functions each returning early for non-matching tool_name), or an array of
+ * input documents to query (more than one for piped/chained Bash commands).
+ */
+async function buildInputDocuments(payload, context) {
   const toolName = payload.tool_name;
   const toolInput = payload.tool_input || {};
+  const { workspaceRoot, cwd, home, enabledBundles } = context;
 
   if (toolName === 'Bash') {
     const command = typeof toolInput.command === 'string' ? toolInput.command.trim() : '';
@@ -66,10 +93,13 @@ async function buildInputDocument(payload) {
       throw err;
     }
 
-    return {
-      event: { tool_name: toolName },
-      parsed: parsedCommandToRegoInput(parsed),
+    const sharedEventFields = {
+      tool_name: toolName,
+      command,
+      workspace_root: workspaceRoot,
+      enabled_bundles: enabledBundles,
     };
+    return flattenCommandsToInputs(parsed, sharedEventFields, workspaceRoot, cwd, home);
   }
 
   if (toolName === 'WebFetch') {
@@ -81,7 +111,9 @@ async function buildInputDocument(payload) {
     } catch {
       return null;
     }
-    return { event: { tool_name: toolName, parameters: { host } } };
+    return [
+      { event: { tool_name: toolName, parameters: { host }, enabled_bundles: enabledBundles } },
+    ];
   }
 
   return null;
@@ -102,17 +134,35 @@ function parsedCommandToRegoInput(parsed) {
 // ── Daemon querying ───────────────────────────────────────────────────────────
 
 /**
- * OPA's REST API serializes a Rego set (decisions contains d if {...}) as a
- * plain JSON array of its elements - verified against a real opa run
- * instance. (The CLI's `opa eval --format=values` output looks different,
- * printing sets as {"<json-string-key>": true}, but that's a CLI-only
- * pretty-printer, not what /v1/data returns.)
+ * OPA's REST API serializes a Rego set two different ways depending on how
+ * the rule was written - verified against a real opa run instance:
+ *   - `decisions contains d if {...}` (new-style set rule) -> a plain JSON
+ *     array of elements.
+ *   - `decisions[decision] if {...}` (older partial-set-rule syntax, used
+ *     throughout the real policies in agent-policies-server) -> a JSON
+ *     OBJECT whose keys are each element's own JSON-encoded string and
+ *     whose values are all `true`.
+ * Both must be handled since the real bundles use the older syntax.
  */
 function parseDecisionSet(rawResult) {
-  if (!Array.isArray(rawResult)) return [];
-  return rawResult
-    .filter((d) => d && typeof d === 'object')
-    .map((decision) => ({ kind: 'decision', ...decision }));
+  if (Array.isArray(rawResult)) {
+    return rawResult.filter((d) => d && typeof d === 'object').map((decision) => ({ kind: 'decision', ...decision }));
+  }
+
+  if (rawResult && typeof rawResult === 'object') {
+    return Object.keys(rawResult)
+      .map((key) => {
+        try {
+          return JSON.parse(key);
+        } catch {
+          return null;
+        }
+      })
+      .filter((d) => d && typeof d === 'object')
+      .map((decision) => ({ kind: 'decision', ...decision }));
+  }
+
+  return [];
 }
 
 async function queryDecisions(socketPath, bundleName, input) {
@@ -168,21 +218,28 @@ async function main() {
     process.exit(0);
   }
 
-  let inputDoc;
+  const context = {
+    workspaceRoot: process.env.CLAUDE_PROJECT_DIR || null,
+    cwd: payload.cwd || process.env.CLAUDE_PROJECT_DIR || null,
+    home: os.homedir(),
+    enabledBundles: bundles,
+  };
+
+  let inputDocs;
   try {
-    inputDoc = await buildInputDocument(payload);
+    inputDocs = await buildInputDocuments(payload, context);
   } catch (e) {
     process.stderr.write(`Failed to build policy input: ${e.message}\n`);
     process.exit(2);
   }
 
-  if (inputDoc === null) {
+  if (inputDocs === null) {
     process.stdout.write(JSON.stringify({ continue: true }));
     process.exit(0);
   }
 
-  if (inputDoc.forcedDenyReason) {
-    const results = [{ kind: 'decision', action: 'deny', reason: inputDoc.forcedDenyReason }];
+  if (inputDocs.forcedDenyReason) {
+    const results = [{ kind: 'decision', action: 'deny', reason: inputDocs.forcedDenyReason }];
     const output =
       hookEventName === 'PreToolUse'
         ? mapToPreToolUseOutput(results, defaultPolicyBehavior)
@@ -204,9 +261,11 @@ async function main() {
 
   const socketPath = socketPathFor(CONFIG_DIR);
   const allResults = [];
-  for (const bundleName of bundles) {
-    const results = await queryDecisions(socketPath, bundleName, inputDoc);
-    allResults.push(...results);
+  for (const doc of inputDocs) {
+    for (const bundleName of bundles) {
+      const results = await queryDecisions(socketPath, bundleName, doc);
+      allResults.push(...results);
+    }
   }
 
   const output =
