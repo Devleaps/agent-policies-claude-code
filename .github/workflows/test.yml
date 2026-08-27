@@ -23,5 +23,29 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      - name: Install dependencies
+        run: npm install
+
       - name: Run tests
+        run: npm test
+
+  verify-grammar-build:
+    name: Verify vendor/tree-sitter-bash.wasm builds reproducibly
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4.1.0
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Rebuild the grammar
+        run: npm run build-grammar
+
+      - name: Confirm the freshly-built grammar loads and parses
         run: npm test

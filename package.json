@@ -9,6 +9,14 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test tests/"
+    "test": "node --test tests/",
+    "build-grammar": "./scripts/build-grammar.sh"
+  },
+  "allowScripts": {
+    "tree-sitter-bash@0.25.1": true,
+    "tree-sitter-cli@0.26.13": true
+  },
+  "dependencies": {
+    "web-tree-sitter": "^0.26.13"
   }
 }
