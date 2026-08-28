@@ -6,7 +6,8 @@ const path = require('path');
 const os = require('os');
 
 const { parseCommand, ParseError } = require('../src/parser');
-const { ensureDaemon, requestOverSocket, socketPathFor } = require('../src/daemon');
+const { ensureDaemon, socketPathFor } = require('../src/daemon');
+const { queryWithMultiPass } = require('../src/twopass');
 const { mapToPreToolUseOutput, mapToPostToolUseOutput } = require('../src/decide');
 const { buildResolvedPaths } = require('../src/paths');
 
@@ -131,57 +132,6 @@ function parsedCommandToRegoInput(parsed) {
   };
 }
 
-// ── Daemon querying ───────────────────────────────────────────────────────────
-
-/**
- * OPA's REST API serializes a Rego set two different ways depending on how
- * the rule was written - verified against a real opa run instance:
- *   - `decisions contains d if {...}` (new-style set rule) -> a plain JSON
- *     array of elements.
- *   - `decisions[decision] if {...}` (older partial-set-rule syntax, used
- *     throughout the real policies in agent-policies-server) -> a JSON
- *     OBJECT whose keys are each element's own JSON-encoded string and
- *     whose values are all `true`.
- * Both must be handled since the real bundles use the older syntax.
- */
-function parseDecisionSet(rawResult) {
-  if (Array.isArray(rawResult)) {
-    return rawResult.filter((d) => d && typeof d === 'object').map((decision) => ({ kind: 'decision', ...decision }));
-  }
-
-  if (rawResult && typeof rawResult === 'object') {
-    return Object.keys(rawResult)
-      .map((key) => {
-        try {
-          return JSON.parse(key);
-        } catch {
-          return null;
-        }
-      })
-      .filter((d) => d && typeof d === 'object')
-      .map((decision) => ({ kind: 'decision', ...decision }));
-  }
-
-  return [];
-}
-
-async function queryDecisions(socketPath, bundleName, input) {
-  const { status, body } = await requestOverSocket(
-    socketPath,
-    'POST',
-    `/v1/data/${bundleName}/decisions`,
-    { input },
-    2000,
-  );
-  if (status !== 200) return [];
-  try {
-    const parsed = JSON.parse(body);
-    return parseDecisionSet(parsed.result);
-  } catch {
-    return [];
-  }
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -262,10 +212,8 @@ async function main() {
   const socketPath = socketPathFor(CONFIG_DIR);
   const allResults = [];
   for (const doc of inputDocs) {
-    for (const bundleName of bundles) {
-      const results = await queryDecisions(socketPath, bundleName, doc);
-      allResults.push(...results);
-    }
+    const decisions = await queryWithMultiPass(socketPath, bundles, doc);
+    allResults.push(...decisions.map((d) => ({ kind: 'decision', ...d })));
   }
 
   const output =
