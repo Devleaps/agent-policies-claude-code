@@ -1,8 +1,8 @@
 'use strict';
 
-// Minimal reader for the declarative test corpus produced by
-// agent-policies-server's scripts/extract_corpus.py. Matches that script's
-// exact (narrow, hand-rolled) YAML output shape - not a general YAML parser.
+// Minimal reader for the declarative, hand-maintained test corpus at
+// agent-policies-server's tests/corpus/extracted_bash.yaml. Matches that
+// file's exact (narrow, hand-rolled) YAML shape - not a general YAML parser.
 
 function unquote(value) {
   const trimmed = value.trim();

@@ -36,6 +36,11 @@ function waitForServer(url, timeoutMs) {
   });
 }
 
+// Tracks the in-flight client.js child so a signal can kill it before it
+// reaches ensureDaemon and spawns a detached opa daemon nothing would then
+// be left to clean up.
+let inFlightClient = null;
+
 function runClient(hookPayload, configDir) {
   return new Promise((resolve, reject) => {
     const child = execFile(
@@ -53,10 +58,12 @@ function runClient(hookPayload, configDir) {
         },
       },
       (err, stdout, stderr) => {
+        inFlightClient = null;
         if (err && err.code !== 0) return reject(new Error(`client.js exited ${err.code}: ${stderr}`));
         resolve(stdout);
       },
     );
+    inFlightClient = child;
     child.stdin.write(JSON.stringify(hookPayload));
     child.stdin.end();
   });
@@ -72,20 +79,59 @@ async function main() {
     cwd: SERVER_REPO,
     env: { ...process.env, POLICY_SERVER_PORT: String(SERVER_PORT) },
     stdio: 'ignore',
+    // detached so server.pid leads its own process group - uv run's actual
+    // python3 child otherwise survives `kill(-server.pid)`, since that only
+    // reaches server.pid's group, and undetached spawns join this script's
+    // group instead of their own.
+    detached: true,
   });
 
-  const cleanupServer = () => {
+  const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-policies-corpus-run-'));
+
+  // Best-effort cleanup for the bundle server and the opa daemon client.js
+  // spawns inside scratchDir. Covers normal completion, thrown errors, and
+  // SIGINT/SIGTERM (Ctrl-C, a CI job cancellation) - it cannot cover this
+  // process itself being killed with SIGKILL, since no userspace code runs
+  // in that case.
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     try {
-      process.kill(-server.pid, 'SIGTERM');
+      process.kill(-server.pid, 'SIGKILL');
     } catch {
       try {
-        server.kill('SIGTERM');
+        server.kill('SIGKILL');
       } catch {
         // already dead
       }
     }
+    if (inFlightClient) {
+      // Kill client.js before it can reach ensureDaemon and spawn a detached
+      // opa daemon that would otherwise outlive this run entirely.
+      try {
+        inFlightClient.kill('SIGKILL');
+      } catch {
+        // already dead
+      }
+    }
+    try {
+      const state = JSON.parse(fs.readFileSync(path.join(scratchDir, 'opa.state.json'), 'utf8'));
+      if (state.pid) process.kill(state.pid, 'SIGKILL');
+    } catch {
+      // no state file, or already dead
+    }
+    fs.rmSync(scratchDir, { recursive: true, force: true });
   };
-  process.on('exit', cleanupServer);
+  process.on('exit', cleanup);
+  process.on('SIGINT', () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    cleanup();
+    process.exit(143);
+  });
 
   await waitForServer(`${SERVER_URL}/`, 20_000);
   console.log('Server ready.');
@@ -94,7 +140,6 @@ async function main() {
   const cases = parseCorpus(yamlText);
   console.log(`Loaded ${cases.length} corpus cases.`);
 
-  const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-policies-corpus-run-'));
   const results = { pass: 0, fail: 0, failures: [] };
 
   // Group by bundle set so the daemon only restarts when the set actually
@@ -140,8 +185,7 @@ async function main() {
     }
   }
 
-  fs.rmSync(scratchDir, { recursive: true, force: true });
-  cleanupServer();
+  cleanup();
 
   const total = results.pass + results.fail;
   const rate = ((results.pass / total) * 100).toFixed(1);

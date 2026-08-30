@@ -54,3 +54,47 @@ jobs:
 
       - name: Confirm the freshly-built grammar loads and parses
         run: npm test
+
+  corpus:
+    name: Run equivalence corpus against a real bundle server
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the plugin repo
+        uses: actions/checkout@v4.2.2
+        with:
+          path: agent-policies-claude-code
+
+      - name: Check out the policy server repo
+        uses: actions/checkout@v4.2.2
+        with:
+          repository: Devleaps/agent-policies-server
+          # TODO: remove this ref pin once agent-policies-server's
+          # feat/opa-bundle-server branch (PR #62) merges to master - it's
+          # only needed because master doesn't have tests/corpus/ yet.
+          ref: feat/opa-bundle-server
+          path: agent-policies-server
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4.1.0
+        with:
+          node-version: 20
+
+      - name: Set up OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+          version: latest
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install plugin dependencies
+        working-directory: agent-policies-claude-code
+        run: npm install
+
+      - name: Install policy server dependencies
+        working-directory: agent-policies-server
+        run: uv sync
+
+      - name: Run corpus
+        working-directory: agent-policies-claude-code
+        run: node scripts/run-corpus.js
