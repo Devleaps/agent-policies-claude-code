@@ -1,6 +1,6 @@
 package testpkg
 
-decisions contains d if {
+decisions contains decision if {
 	input.command == "allow-me"
-	d := {"action": "allow"}
+	decision := {"action": "allow"}
 }

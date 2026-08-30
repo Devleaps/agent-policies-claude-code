@@ -107,6 +107,167 @@ test('an unrelated tool with no policy relevance passes through untouched', asyn
   assert.deepEqual(output, { continue: true });
 });
 
+test('SessionStart warms the daemon and returns bare continue', async () => {
+  const { stdout } = await runClient({ hook_event_name: 'SessionStart' });
+  const output = JSON.parse(stdout);
+  assert.deepEqual(output, { continue: true });
+
+  const statePath = path.join(scratchDir, 'opa.state.json');
+  assert.equal(fs.existsSync(statePath), true, 'daemon should have been spawned by SessionStart');
+});
+
+test('SessionStart with an unknown bundle name does not fail, and spawns no daemon', async () => {
+  fs.writeFileSync(
+    path.join(scratchDir, 'config.json'),
+    JSON.stringify({ server_url: fixture.url, bundles: ['not-a-real-bundle'] }),
+  );
+
+  const { stdout } = await runClient({ hook_event_name: 'SessionStart' });
+  const output = JSON.parse(stdout);
+  assert.deepEqual(output, { continue: true });
+
+  const statePath = path.join(scratchDir, 'opa.state.json');
+  assert.equal(fs.existsSync(statePath), false);
+});
+
+test('a Write with a comment that merely restates the code produces the comment_overlap guidance', async () => {
+  const { stdout } = await runClient({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Write',
+    tool_input: { file_path: 'src/app.py' },
+    tool_response: {
+      structuredPatch: [
+        {
+          oldStart: 1,
+          oldLines: 0,
+          newStart: 1,
+          newLines: 1,
+          lines: ['+get_user(user_id)  # get user'],
+        },
+      ],
+    },
+  });
+  const output = JSON.parse(stdout);
+  assert.match(output.hookSpecificOutput.additionalContext, /Ensure comments add value/);
+});
+
+test('an Edit mentioning "deprecated" produces the legacy_code guidance', async () => {
+  const { stdout } = await runClient({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Edit',
+    tool_input: { file_path: 'src/app.py' },
+    tool_response: {
+      structuredPatch: [
+        {
+          oldStart: 1,
+          oldLines: 0,
+          newStart: 1,
+          newLines: 1,
+          lines: ['+# this code path is deprecated'],
+        },
+      ],
+    },
+  });
+  const output = JSON.parse(stdout);
+  assert.match(output.hookSpecificOutput.additionalContext, /backwards compatibility actually a requirement/);
+});
+
+test('a Write with clean, non-restating comments produces no guidance', async () => {
+  const { stdout } = await runClient({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Write',
+    tool_input: { file_path: 'src/app.py' },
+    tool_response: {
+      structuredPatch: [
+        {
+          oldStart: 1,
+          oldLines: 0,
+          newStart: 1,
+          newLines: 2,
+          lines: ['+x = 1  # workaround for a vendor library bug, see issue 42', '+y = 2'],
+        },
+      ],
+    },
+  });
+  const output = JSON.parse(stdout);
+  assert.deepEqual(output, { continue: true });
+});
+
+test('an Edit on a non-.py file produces no file-edit guidance at all', async () => {
+  const { stdout } = await runClient({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Edit',
+    tool_input: { file_path: 'src/app.js' },
+    tool_response: {
+      structuredPatch: [{ oldStart: 1, oldLines: 0, newStart: 1, newLines: 1, lines: ['+# deprecated'] }],
+    },
+  });
+  const output = JSON.parse(stdout);
+  assert.deepEqual(output, { continue: true });
+});
+
+test('a PreToolUse Edit event (no tool_response yet) passes through untouched', async () => {
+  const { stdout } = await runClient({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Edit',
+    tool_input: { file_path: 'src/app.py' },
+  });
+  const output = JSON.parse(stdout);
+  assert.deepEqual(output, { continue: true });
+});
+
+test('a session flag set by one decision persists to disk and is read by the next invocation', async () => {
+  const sessionId = 'flags-test-session';
+
+  const pushBeforeCommit = await runClient({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'git push' },
+    session_id: sessionId,
+  });
+  assert.equal(JSON.parse(pushBeforeCommit.stdout).hookSpecificOutput.permissionDecision, 'deny');
+
+  const commit = await runClient({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'git commit' },
+    session_id: sessionId,
+  });
+  assert.equal(JSON.parse(commit.stdout).hookSpecificOutput.permissionDecision, 'allow');
+
+  // A *separate* client.js process (this is a fresh runClient call, its own
+  // process) must see the flag the previous invocation persisted to disk -
+  // the fixture's deny rule only fires when session_flags.committed is
+  // unset, so a bare {continue: true} here proves the flag suppressed it.
+  const pushAfterCommit = await runClient({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'git push' },
+    session_id: sessionId,
+  });
+  assert.deepEqual(JSON.parse(pushAfterCommit.stdout), { continue: true });
+
+  const stateFile = path.join(scratchDir, 'state', `${sessionId}.json`);
+  assert.equal(fs.existsSync(stateFile), true);
+});
+
+test('session flags are isolated per session_id', async () => {
+  await runClient({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'git commit' },
+    session_id: 'session-a',
+  });
+
+  const otherSessionPush = await runClient({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'git push' },
+    session_id: 'session-b',
+  });
+  assert.equal(JSON.parse(otherSessionPush.stdout).hookSpecificOutput.permissionDecision, 'deny');
+});
+
 test('a second invocation reuses the already-running daemon', async () => {
   await runClient({
     hook_event_name: 'PreToolUse',
@@ -124,4 +285,26 @@ test('a second invocation reuses the already-running daemon', async () => {
   const secondState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 
   assert.equal(secondState.pid, firstState.pid);
+});
+
+test('an unknown bundle name in config falls back to default behavior without spawning a daemon', async () => {
+  fs.writeFileSync(
+    path.join(scratchDir, 'config.json'),
+    JSON.stringify({ server_url: fixture.url, bundles: ['not-a-real-bundle'], default_policy_behavior: 'ask' }),
+  );
+
+  const { stdout } = await runClient({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'cat file.txt' },
+  });
+  const output = JSON.parse(stdout);
+  // Matches the existing daemon-unreachable fallback exactly (client.js
+  // passes an empty results array to mapToPreToolUseOutput either way,
+  // which short-circuits to a bare {continue: true} regardless of
+  // default_policy_behavior - see decide.js).
+  assert.deepEqual(output, { continue: true });
+
+  const statePath = path.join(scratchDir, 'opa.state.json');
+  assert.equal(fs.existsSync(statePath), false, 'no daemon should have been spawned for an unknown bundle name');
 });

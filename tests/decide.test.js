@@ -90,3 +90,18 @@ test('PostToolUse with decisions but no reasons and no guidance returns bare con
   const output = mapToPostToolUseOutput(results);
   assert.deepEqual(output, { continue: true });
 });
+
+test('a decision with no action (only flags) defaults to allow', () => {
+  const results = [{ kind: 'decision', flags: [{ name: 'ran_tests', value: false }] }];
+  const output = mapToPreToolUseOutput(results, null);
+  assert.equal(output.hookSpecificOutput.permissionDecision, 'allow');
+});
+
+test('a flags-only decision loses to an explicit deny from another decision', () => {
+  const results = [
+    { kind: 'decision', flags: [{ name: 'ran_tests', value: false }] },
+    { kind: 'decision', action: 'deny', reason: 'not allowed' },
+  ];
+  const output = mapToPreToolUseOutput(results, null);
+  assert.equal(output.hookSpecificOutput.permissionDecision, 'deny');
+});
