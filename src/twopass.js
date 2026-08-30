@@ -7,7 +7,7 @@
 // daemon, resolves any incomplete requests via a fixed set of resolvers, and
 // re-queries once with the resolved data folded into input.
 
-const { requestOverSocket } = require('./daemon');
+const { requestOverSocket, ensureDaemon, socketPathFor } = require('./daemon');
 const { resolvePypiMetadata } = require('./measurements/pypi');
 const { commentRatio } = require('./measurements/commentRatio');
 const { commentOverlap } = require('./measurements/commentOverlap');
@@ -284,8 +284,27 @@ async function queryWithMultiPass(socketPath, bundles, input, resolvers = RESOLV
   return allDecisions.map((d) => ({ kind: 'decision', ...d }));
 }
 
+/**
+ * Try fn(socketPath) against whatever daemon is currently assumed to be
+ * running. If that fails because the daemon was actually unreachable
+ * (DaemonUnreachableError - see queryRuleSet), force a fresh spawn and try
+ * once more. Any other failure to respawn, or a second DaemonUnreachableError,
+ * is left for the caller to catch and fall back to default_policy_behavior.
+ */
+async function withDaemon(serverUrl, bundles, configDir, fn) {
+  try {
+    return await fn(socketPathFor(configDir));
+  } catch (err) {
+    if (!(err instanceof DaemonUnreachableError)) throw err;
+    const respawned = await ensureDaemon(serverUrl, bundles, configDir, { forceRespawn: true });
+    if (!respawned) throw err;
+    return await fn(socketPathFor(configDir));
+  }
+}
+
 module.exports = {
   queryWithMultiPass,
+  withDaemon,
   resolveRequireEntries,
   parseDecisionSet,
   UnknownRequireKindError,

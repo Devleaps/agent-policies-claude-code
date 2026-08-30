@@ -6,8 +6,8 @@ const path = require('path');
 const os = require('os');
 
 const { parseCommand, ParseError } = require('../src/parser');
-const { ensureDaemon, socketPathFor, allBundlesKnown } = require('../src/daemon');
-const { queryWithMultiPass, DaemonUnreachableError } = require('../src/twopass');
+const { ensureDaemon, allBundlesKnown } = require('../src/daemon');
+const { queryWithMultiPass, withDaemon, DaemonUnreachableError } = require('../src/twopass');
 const { mapToPreToolUseOutput, mapToPostToolUseOutput } = require('../src/decide');
 const { buildResolvedPaths } = require('../src/paths');
 const {
@@ -298,6 +298,13 @@ async function main() {
     process.exit(0);
   }
 
+  // Cheap when the daemon already matches (a state-file read, no socket
+  // I/O - see ensureDaemon's docstring); only pays for a real respawn when
+  // the bundle set actually changed since the daemon was last started.
+  // withDaemon's own respawn-on-failure below cannot substitute for this:
+  // a bundle-set mismatch doesn't make the daemon unreachable, it just
+  // makes it answer from the wrong (stale) bundle set, so nothing would
+  // ever throw DaemonUnreachableError to trigger a respawn on its own.
   const daemonReady = await ensureDaemon(serverUrl, bundles, CONFIG_DIR);
   if (!daemonReady) {
     process.stderr.write('Local policy daemon unavailable; falling back to default behavior\n');
@@ -320,39 +327,23 @@ async function main() {
     sessionFlags = getAllFlags(sessionId, { stateDir: STATE_DIR });
   }
 
-  const socketPath = socketPathFor(CONFIG_DIR);
   let allResults;
   try {
-    allResults = await queryAllDocuments(inputDocs, sessionFlags, socketPath, bundles);
+    // withDaemon tries the query against whatever daemon is assumed to be
+    // running; if that assumption was wrong (DaemonUnreachableError), it
+    // forces a fresh spawn and retries exactly once - see twopass.js.
+    allResults = await withDaemon(serverUrl, bundles, CONFIG_DIR, (socketPath) =>
+      queryAllDocuments(inputDocs, sessionFlags, socketPath, bundles),
+    );
   } catch (err) {
     if (!(err instanceof DaemonUnreachableError)) throw err;
-    // The daemon we assumed was reusable (see ensureDaemon's docstring)
-    // turned out not to be - the real query itself is the actual liveness
-    // test, and it just failed one. Force a fresh spawn and retry exactly
-    // once before giving up and falling back to default_policy_behavior.
-    process.stderr.write('Local policy daemon did not respond; respawning and retrying once\n');
-    const respawned = await ensureDaemon(serverUrl, bundles, CONFIG_DIR, { forceRespawn: true });
-    if (!respawned) {
-      process.stderr.write('Local policy daemon unavailable; falling back to default behavior\n');
-      const output =
-        hookEventName === 'PreToolUse'
-          ? mapToPreToolUseOutput([], defaultPolicyBehavior)
-          : mapToPostToolUseOutput([]);
-      process.stdout.write(JSON.stringify(output));
-      process.exit(0);
-    }
-    try {
-      allResults = await queryAllDocuments(inputDocs, sessionFlags, socketPath, bundles);
-    } catch (retryErr) {
-      if (!(retryErr instanceof DaemonUnreachableError)) throw retryErr;
-      process.stderr.write('Local policy daemon still unreachable after respawn; falling back to default behavior\n');
-      const output =
-        hookEventName === 'PreToolUse'
-          ? mapToPreToolUseOutput([], defaultPolicyBehavior)
-          : mapToPostToolUseOutput([]);
-      process.stdout.write(JSON.stringify(output));
-      process.exit(0);
-    }
+    process.stderr.write('Local policy daemon unavailable; falling back to default behavior\n');
+    const output =
+      hookEventName === 'PreToolUse'
+        ? mapToPreToolUseOutput([], defaultPolicyBehavior)
+        : mapToPostToolUseOutput([]);
+    process.stdout.write(JSON.stringify(output));
+    process.exit(0);
   }
 
   if (sessionId) {
