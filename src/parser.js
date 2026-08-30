@@ -157,6 +157,70 @@ function extractRedirects(node, src) {
   return redirects;
 }
 
+// Node types that represent one whole shell word and must not be descended
+// into - e.g. a quoted string like "$x" is a `string` node containing its
+// own `simple_expansion`/`string_content` children, but it is one word, not
+// several. Collection stops here and takes the node's full source text.
+const ATOMIC_WORD_NODE_TYPES = new Set([
+  'word', 'string', 'raw_string', 'simple_expansion', 'expansion', 'number',
+]);
+
+/**
+ * Collect every whole-word token under a `test_command` node's expression
+ * body, in source order, as a flat word list - `[ -f a.txt -a -f b.txt ]`
+ * becomes exactly the same words a shell would see split on whitespace
+ * (`-f`, `a.txt`, `-a`, `-f`, `b.txt`), regardless of how deeply
+ * tree-sitter's unary/binary_expression grammar nests them. This
+ * deliberately does not interpret test-expression semantics (no
+ * understanding of -a/-o/!/&&/==) - existing policies only ever read
+ * `arguments`/`options` as plain word lists (see e.g. universal's
+ * `bracket_args_and_options_safe`), so a flat reconstruction is enough.
+ */
+function collectTestExpressionWords(node, src, words) {
+  if (node.childCount === 0 || ATOMIC_WORD_NODE_TYPES.has(node.type)) {
+    words.push(text(node, src));
+    return;
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    collectTestExpressionWords(node.child(i), src, words);
+  }
+}
+
+function extractTestCommand(node, src) {
+  // First and last children are the literal delimiters: `[`/`]` or
+  // `[[`/`]]`. `bracket_args_and_options_safe` (universal/file_operations.rego)
+  // explicitly expects the closing `]` to still be present in `arguments`
+  // for the `[` form (it filters it back out itself) - `[[`/`]]` follow the
+  // same flat-word-list treatment for consistency, since no policy special-
+  // cases them differently today.
+  const openToken = node.child(0);
+  const closeToken = node.child(node.childCount - 1);
+  const executable = text(openToken, src);
+
+  const words = [];
+  for (let i = 1; i < node.childCount - 1; i++) {
+    collectTestExpressionWords(node.child(i), src, words);
+  }
+  if (executable === '[') {
+    words.push(text(closeToken, src));
+  }
+
+  const { subcommand, arguments: arguments_, flags, options } = classifyWords(executable, words);
+
+  return {
+    executable,
+    subcommand,
+    arguments: arguments_,
+    flags,
+    options,
+    redirects: [],
+    pipes: [],
+    chained: [],
+    process_substitutions: [],
+    original: src,
+  };
+}
+
 function extractCommand(node, src) {
   let commandNode = node;
   let redirects = [];
@@ -164,6 +228,12 @@ function extractCommand(node, src) {
   if (node.type === 'redirected_statement') {
     commandNode = node.childForFieldName('body');
     redirects = extractRedirects(node, src);
+  }
+
+  if (commandNode && commandNode.type === 'test_command') {
+    const result = extractTestCommand(commandNode, src);
+    result.redirects = redirects;
+    return result;
   }
 
   if (!commandNode || commandNode.type !== 'command') {
@@ -199,7 +269,7 @@ function extractStatement(node, src) {
   if (node.type === 'pipeline') {
     const commands = [];
     for (const child of node.namedChildren) {
-      if (child.type === 'command' || child.type === 'redirected_statement') {
+      if (child.type === 'command' || child.type === 'redirected_statement' || child.type === 'test_command') {
         commands.push(extractCommand(child, src));
       }
     }
@@ -212,7 +282,12 @@ function extractStatement(node, src) {
   if (node.type === 'list') {
     const commands = [];
     for (const child of node.namedChildren) {
-      if (child.type === 'command' || child.type === 'redirected_statement' || child.type === 'pipeline') {
+      if (
+        child.type === 'command' ||
+        child.type === 'redirected_statement' ||
+        child.type === 'pipeline' ||
+        child.type === 'test_command'
+      ) {
         commands.push(extractStatement(child, src));
       }
     }

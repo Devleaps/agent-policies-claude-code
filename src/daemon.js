@@ -12,6 +12,21 @@ const HEALTH_TIMEOUT_MS = 500;
 const READY_POLL_INTERVAL_MS = 200;
 const READY_TIMEOUT_MS = 10_000;
 
+// Must match agent-policies-server's src/server/bundles.py KNOWN_BUNDLES
+// exactly - kept manually in sync since there's no shared source of truth
+// across the two repos. Without this, a malformed or malicious
+// config.json's `bundles` list would be string-interpolated straight into
+// the daemon's bundle-service resource path unvalidated. Exported (rather
+// than enforced inside ensureDaemon itself) so this module's own tests can
+// keep exercising daemon lifecycle mechanics with synthetic bundle names
+// that don't correspond to any real server bundle - validation is the
+// caller's concern (see client.js), not this module's.
+const KNOWN_BUNDLES = new Set(['universal', 'python_uv', 'python_pip', 'demo_bundles', 'demo_flags']);
+
+function allBundlesKnown(bundleNames) {
+  return Array.isArray(bundleNames) && bundleNames.every((name) => KNOWN_BUNDLES.has(name));
+}
+
 function paths(configDir) {
   return {
     configDir,
@@ -246,4 +261,6 @@ module.exports = {
   isHealthy,
   socketPathFor,
   DEFAULT_CONFIG_DIR,
+  KNOWN_BUNDLES,
+  allBundlesKnown,
 };

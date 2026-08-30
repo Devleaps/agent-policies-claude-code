@@ -285,3 +285,47 @@ test('multiple redirects with heredoc', async () => {
   assert.equal(cmd.executable, 'sort');
   assert.equal(cmd.redirects.length, 2);
 });
+
+test('single bracket test command parses instead of denying as unparseable', async () => {
+  const cmd = await parseCommand('[ -f file.txt ]');
+  assert.equal(cmd.executable, '[');
+  // bracket_args_and_options_safe (universal/file_operations.rego) expects
+  // the closing ']' still present in arguments - it filters it out itself.
+  assert.ok(cmd.arguments.includes(']'));
+  assert.equal(cmd.options['-f'], 'file.txt');
+});
+
+test('double bracket test command parses', async () => {
+  const cmd = await parseCommand('[[ -f file.txt ]]');
+  assert.equal(cmd.executable, '[[');
+  assert.equal(cmd.options['-f'], 'file.txt');
+});
+
+test('test builtin already parsed as a normal command (regression guard)', async () => {
+  const cmd = await parseCommand('test -f file.txt');
+  assert.equal(cmd.executable, 'test');
+  assert.equal(cmd.options['-f'], 'file.txt');
+});
+
+test('bracket test with quoted string comparison keeps each quoted word whole', async () => {
+  const cmd = await parseCommand('[ "$x" == "y" ]');
+  assert.equal(cmd.executable, '[');
+  assert.ok(cmd.arguments.includes('"$x"'));
+  assert.ok(cmd.arguments.includes('"y"'));
+});
+
+test('bracket test chained with && parses both sides', async () => {
+  const cmd = await parseCommand('[ -f file.txt ] && echo yes');
+  assert.equal(cmd.executable, '[');
+  assert.equal(cmd.chained.length, 1);
+  assert.equal(cmd.chained[0].executable, 'echo');
+});
+
+test('bracket test chained before a piped command parses both', async () => {
+  const cmd = await parseCommand('[ -f file.txt ] && cat file.txt | wc -l');
+  assert.equal(cmd.executable, '[');
+  assert.equal(cmd.chained.length, 1);
+  assert.equal(cmd.chained[0].executable, 'cat');
+  assert.equal(cmd.chained[0].pipes.length, 1);
+  assert.equal(cmd.chained[0].pipes[0].executable, 'wc');
+});
