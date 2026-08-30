@@ -31,3 +31,13 @@ test('comment lines are skipped, not mistaken for imports', () => {
 test('returns false when there is no import at all', () => {
   assert.equal(midCodeImport(patchOf(['def f():', '    return 1'])).matched, false);
 });
+
+test('a mid-code import being removed does not match', () => {
+  const input = { structured_patch: [{ lines: [{ operation: 'removed', content: '    import os' }] }] };
+  assert.equal(midCodeImport(input).matched, false);
+});
+
+test('a mid-code import present only as unchanged context does not match', () => {
+  const input = { structured_patch: [{ lines: [{ operation: 'unchanged', content: '    import os' }] }] };
+  assert.equal(midCodeImport(input).matched, false);
+});

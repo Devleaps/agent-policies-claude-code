@@ -38,6 +38,21 @@ test('no matching lines returns max_run 0', () => {
   assert.equal(commentedCode(input).max_run, 0);
 });
 
+test('unchanged and removed commented-out lines do not count toward a run', () => {
+  const input = {
+    structured_patch: [
+      {
+        lines: [
+          { operation: 'unchanged', content: '    # old_code()' },
+          { operation: 'removed', content: '    # more_old_code()' },
+          { operation: 'added', content: 'def f(): pass' },
+        ],
+      },
+    ],
+  };
+  assert.equal(commentedCode(input).max_run, 0);
+});
+
 test('a run does not span across separate patch hunks', () => {
   const input = {
     structured_patch: [

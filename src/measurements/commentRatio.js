@@ -1,10 +1,14 @@
 'use strict';
 
-// "comment_ratio" resolver: over every non-blank patch line, what fraction
+// "comment_ratio" resolver: over every non-blank ADDED line, what fraction
 // are comments? A line counts as a comment if it starts with "#" and is not
-// a shebang ("#!"). Ratio is comments as a fraction of ALL non-blank lines
-// (comments + code), not comments-to-code - matching the deleted Python
-// implementation's naming despite that naming being slightly misleading.
+// a shebang ("#!"). Ratio is comments as a fraction of ALL non-blank added
+// lines (comments + code), not comments-to-code - matching the deleted
+// Python implementation's naming despite that naming being slightly
+// misleading. Unlike the deleted implementation, unchanged/removed lines
+// are excluded - it counted every patch line regardless of operation, so a
+// file that already had a high comment density could trip this guidance
+// on an edit that added no comments at all.
 
 function isCommentLine(content) {
   const stripped = content.trim();
@@ -24,6 +28,7 @@ function commentRatio(input) {
 
   for (const patch of input.structured_patch || []) {
     for (const line of patch.lines || []) {
+      if (line.operation !== 'added') continue;
       const stripped = line.content.trim();
       if (stripped === '') continue;
       if (isCommentLine(line.content)) {

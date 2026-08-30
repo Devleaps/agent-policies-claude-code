@@ -61,6 +61,53 @@ test('returns null when nothing looks like an overlapping comment', () => {
   assert.equal(commentOverlap(input), null);
 });
 
+test('a restating inline comment being removed does not trigger the guidance', () => {
+  const input = {
+    structured_patch: [
+      { lines: [{ operation: 'removed', content: 'get_user(user_id)  # get user' }] },
+    ],
+  };
+  assert.equal(commentOverlap(input), null);
+});
+
+test('a restating inline comment present only as unchanged context does not trigger the guidance', () => {
+  const input = {
+    structured_patch: [
+      { lines: [{ operation: 'unchanged', content: 'get_user(user_id)  # get user' }] },
+    ],
+  };
+  assert.equal(commentOverlap(input), null);
+});
+
+test('a restating standalone comment present only as removed/unchanged does not trigger the guidance', () => {
+  const input = {
+    structured_patch: [
+      {
+        lines: [
+          { operation: 'removed', content: '# get user by id' },
+          { operation: 'removed', content: 'def get_user(id):' },
+        ],
+      },
+    ],
+  };
+  assert.equal(commentOverlap(input), null);
+});
+
+test('a newly added comment restating unchanged code below it still triggers the guidance', () => {
+  const input = {
+    structured_patch: [
+      {
+        lines: [
+          { operation: 'added', content: '# get user by id' },
+          { operation: 'unchanged', content: 'def get_user(id):' },
+        ],
+      },
+    ],
+  };
+  const result = commentOverlap(input);
+  assert.ok(result && result.ratio >= 0.4);
+});
+
 test('a string literal containing "#" is treated naively as inline comment syntax (documented quirk)', () => {
   // Matches the recovered Python behavior exactly - not a feature, a known
   // limitation carried over deliberately rather than silently "fixed".

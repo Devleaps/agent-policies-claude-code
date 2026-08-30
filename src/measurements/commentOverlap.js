@@ -3,10 +3,13 @@
 // "comment_overlap" resolver: does a comment mostly restate the code next
 // to it? Checked in two forms per line - inline ("code  # comment") and
 // standalone ("# comment" on its own line, compared against the next
-// line's code) - matching the deleted Python implementation exactly,
-// including its keyword-extraction quirks (digits/underscores act as word
-// separators since the regex only matches [a-z]+, so "get_user_id" becomes
-// {"get", "user"} - "id" is dropped for being length <= 2).
+// line's code) - matching the deleted Python implementation's
+// keyword-extraction quirks (digits/underscores act as word separators
+// since the regex only matches [a-z]+, so "get_user_id" becomes {"get",
+// "user"} - "id" is dropped for being length <= 2). Unlike the deleted
+// implementation, only considers added lines - it iterated every patch
+// line regardless of operation, so removing a restating comment (or even
+// just unchanged context near one) could itself trigger this guidance.
 
 function extractKeywords(text) {
   const words = text.toLowerCase().match(/[a-z]+/g) || [];
@@ -32,6 +35,7 @@ function commentOverlap(input) {
   for (const patch of input.structured_patch || []) {
     const lines = patch.lines || [];
     for (let i = 0; i < lines.length; i += 1) {
+      if (lines[i].operation !== 'added') continue;
       const content = lines[i].content;
       const stripped = content.trim();
 

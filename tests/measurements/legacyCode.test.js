@@ -35,3 +35,13 @@ test('is case-insensitive', () => {
 test('returns false when nothing matches', () => {
   assert.equal(legacyCode(patchOf(['def f(): return 1'])).matched, false);
 });
+
+test('a legacy mention being removed does not match', () => {
+  const input = { structured_patch: [{ lines: [{ operation: 'removed', content: '# legacy support below' }] }] };
+  assert.equal(legacyCode(input).matched, false);
+});
+
+test('a legacy mention present only as unchanged context does not match', () => {
+  const input = { structured_patch: [{ lines: [{ operation: 'unchanged', content: '# legacy support below' }] }] };
+  assert.equal(legacyCode(input).matched, false);
+});

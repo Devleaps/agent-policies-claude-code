@@ -36,6 +36,22 @@ test('returns null for an all-blank patch', () => {
   assert.equal(commentRatio(input), null);
 });
 
+test('unchanged and removed lines do not count toward the ratio', () => {
+  const input = {
+    structured_patch: [
+      {
+        lines: [
+          { operation: 'unchanged', content: '# old comment' },
+          { operation: 'removed', content: '# another old comment' },
+          { operation: 'added', content: 'code()' },
+        ],
+      },
+    ],
+  };
+  const result = commentRatio(input);
+  assert.equal(result.ratio, 0);
+});
+
 test('spans multiple patch hunks', () => {
   const input = {
     structured_patch: [
