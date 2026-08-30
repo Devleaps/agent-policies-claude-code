@@ -9,7 +9,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js tests/client/client.test.js tests/conformance/*.test.js tests/daemon/*.test.js tests/measurements/*.test.js tests/twopass/*.test.js",
     "build-grammar": "./scripts/build-grammar.sh"
   },
   "allowScripts": {

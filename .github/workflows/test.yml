@@ -46,6 +46,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Set up OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+          version: latest
+
       - name: Install dependencies
         run: npm install
 
@@ -98,3 +103,7 @@ jobs:
       - name: Run corpus
         working-directory: agent-policies-claude-code
         run: node scripts/run-corpus.js
+
+      - name: Run demo_flags end-to-end tests
+        working-directory: agent-policies-claude-code
+        run: node --test tests/client/demo_flags.test.js
