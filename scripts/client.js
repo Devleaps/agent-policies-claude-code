@@ -7,7 +7,7 @@ const os = require('os');
 
 const { parseCommand, ParseError } = require('../src/parser');
 const { ensureDaemon, socketPathFor, allBundlesKnown } = require('../src/daemon');
-const { queryWithMultiPass } = require('../src/twopass');
+const { queryWithMultiPass, DaemonUnreachableError } = require('../src/twopass');
 const { mapToPreToolUseOutput, mapToPostToolUseOutput } = require('../src/decide');
 const { buildResolvedPaths } = require('../src/paths');
 const {
@@ -179,6 +179,23 @@ function parsedCommandToRegoInput(parsed) {
   };
 }
 
+/**
+ * Query every input document against the daemon in turn, tagging session
+ * flags onto each one. Left as a plain pass-through of queryWithMultiPass's
+ * DaemonUnreachableError (does not catch it) so the caller can decide
+ * whether to respawn and retry.
+ */
+async function queryAllDocuments(inputDocs, sessionFlags, socketPath, bundles) {
+  const allResults = [];
+  for (const doc of inputDocs) {
+    const docWithFlags = { ...doc, session_flags: sessionFlags };
+    // Already tagged {kind: 'decision'|'guidance', ...} by queryWithMultiPass.
+    const results = await queryWithMultiPass(socketPath, bundles, docWithFlags);
+    allResults.push(...results);
+  }
+  return allResults;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -304,12 +321,38 @@ async function main() {
   }
 
   const socketPath = socketPathFor(CONFIG_DIR);
-  const allResults = [];
-  for (const doc of inputDocs) {
-    const docWithFlags = { ...doc, session_flags: sessionFlags };
-    // Already tagged {kind: 'decision'|'guidance', ...} by queryWithMultiPass.
-    const results = await queryWithMultiPass(socketPath, bundles, docWithFlags);
-    allResults.push(...results);
+  let allResults;
+  try {
+    allResults = await queryAllDocuments(inputDocs, sessionFlags, socketPath, bundles);
+  } catch (err) {
+    if (!(err instanceof DaemonUnreachableError)) throw err;
+    // The daemon we assumed was reusable (see ensureDaemon's docstring)
+    // turned out not to be - the real query itself is the actual liveness
+    // test, and it just failed one. Force a fresh spawn and retry exactly
+    // once before giving up and falling back to default_policy_behavior.
+    process.stderr.write('Local policy daemon did not respond; respawning and retrying once\n');
+    const respawned = await ensureDaemon(serverUrl, bundles, CONFIG_DIR, { forceRespawn: true });
+    if (!respawned) {
+      process.stderr.write('Local policy daemon unavailable; falling back to default behavior\n');
+      const output =
+        hookEventName === 'PreToolUse'
+          ? mapToPreToolUseOutput([], defaultPolicyBehavior)
+          : mapToPostToolUseOutput([]);
+      process.stdout.write(JSON.stringify(output));
+      process.exit(0);
+    }
+    try {
+      allResults = await queryAllDocuments(inputDocs, sessionFlags, socketPath, bundles);
+    } catch (retryErr) {
+      if (!(retryErr instanceof DaemonUnreachableError)) throw retryErr;
+      process.stderr.write('Local policy daemon still unreachable after respawn; falling back to default behavior\n');
+      const output =
+        hookEventName === 'PreToolUse'
+          ? mapToPreToolUseOutput([], defaultPolicyBehavior)
+          : mapToPostToolUseOutput([]);
+      process.stdout.write(JSON.stringify(output));
+      process.exit(0);
+    }
   }
 
   if (sessionId) {

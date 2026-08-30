@@ -287,6 +287,34 @@ test('a second invocation reuses the already-running daemon', async () => {
   assert.equal(secondState.pid, firstState.pid);
 });
 
+test('a daemon that died since the last invocation is detected and replaced, not silently treated as reusable', async () => {
+  await runClient({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'cat file.txt' },
+  });
+  const statePath = path.join(scratchDir, 'opa.state.json');
+  const firstState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+
+  // Simulate the daemon crashing/being killed externally while the state
+  // file still records it as the last-known-good daemon - ensureDaemon no
+  // longer probes this proactively (see its docstring), so the only way
+  // this surfaces is the real query itself failing.
+  process.kill(firstState.pid, 'SIGKILL');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  const { stdout } = await runClient({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'cat other.txt' },
+  });
+  const decision = JSON.parse(stdout).hookSpecificOutput.permissionDecision;
+  assert.equal(decision, 'allow', 'the retried query against a freshly respawned daemon must still get a real answer');
+
+  const secondState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.notEqual(secondState.pid, firstState.pid, 'a new daemon process must have been spawned');
+});
+
 test('an unknown bundle name in config falls back to default behavior without spawning a daemon', async () => {
   fs.writeFileSync(
     path.join(scratchDir, 'config.json'),

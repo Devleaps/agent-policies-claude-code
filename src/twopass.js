@@ -67,14 +67,32 @@ function parseDecisionSet(rawResult) {
   return [];
 }
 
+/**
+ * Thrown when the request never reached a live daemon at all (socket
+ * missing/refused, or timed out) - distinguishable from OPA itself
+ * responding with a clean non-200 (a real answer, just not a 200), which
+ * still means "no results" rather than "go spawn a daemon".
+ */
+class DaemonUnreachableError extends Error {
+  constructor(cause) {
+    super(`daemon unreachable: ${cause.message}`);
+    this.cause = cause;
+  }
+}
+
 async function queryRuleSet(socketPath, bundleName, ruleName, input) {
-  const { status, body } = await requestOverSocket(
-    socketPath,
-    'POST',
-    `/v1/data/${bundleName}/${ruleName}`,
-    { input },
-    2000,
-  );
+  let status, body;
+  try {
+    ({ status, body } = await requestOverSocket(
+      socketPath,
+      'POST',
+      `/v1/data/${bundleName}/${ruleName}`,
+      { input },
+      2000,
+    ));
+  } catch (err) {
+    throw new DaemonUnreachableError(err);
+  }
   if (status !== 200) return [];
   try {
     const parsed = JSON.parse(body);
@@ -266,4 +284,10 @@ async function queryWithMultiPass(socketPath, bundles, input, resolvers = RESOLV
   return allDecisions.map((d) => ({ kind: 'decision', ...d }));
 }
 
-module.exports = { queryWithMultiPass, resolveRequireEntries, parseDecisionSet, UnknownRequireKindError };
+module.exports = {
+  queryWithMultiPass,
+  resolveRequireEntries,
+  parseDecisionSet,
+  UnknownRequireKindError,
+  DaemonUnreachableError,
+};

@@ -197,32 +197,64 @@ async function waitUntilHealthy(socketPath, timeoutMs) {
   return false;
 }
 
-async function waitUntilSocketGone(socketPath, timeoutMs) {
+function isProcessAlive(pid) {
+  try {
+    // Signal 0 sends nothing - it only tests whether the process exists
+    // and is signalable, which is exactly what's needed here.
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait for a terminated daemon's process to actually exit. Does not wait
+ * for its socket *file* to disappear - a killed (as opposed to gracefully
+ * exited) process can leave that file behind indefinitely, and spawnDaemon
+ * already unconditionally removes any stale socket right before binding a
+ * fresh one, so waiting on the file here would only ever pay the full
+ * timeout for no benefit in exactly the case (an already-dead daemon) this
+ * is meant to handle quickly.
+ */
+async function waitUntilProcessGone(pid, timeoutMs) {
+  if (!pid) return true;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!fs.existsSync(socketPath)) return true;
+    if (!isProcessAlive(pid)) return true;
     await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
   }
-  removeStaleSocket(socketPath);
-  return true;
+  return false;
 }
 
 /**
  * Ensure a local OPA daemon is running with exactly the requested bundle set
- * active, spawning or restarting it as needed. Returns true if the daemon is
- * confirmed healthy and serving the requested bundles, false if it could not
- * be brought up (callers should fall back to default_policy_behavior).
+ * active, spawning or restarting it as needed. Returns true if a daemon
+ * matching bundleNames is now running (freshly confirmed healthy if just
+ * spawned/respawned), false if it could not be brought up (callers should
+ * fall back to default_policy_behavior).
+ *
+ * Deliberately does NOT probe a live socket to decide whether an
+ * already-tracked daemon is reusable - a dedicated /health round trip here
+ * and the real query moments later in the caller are two separate socket
+ * requests that can disagree under load (the actual daemon is fine, but the
+ * probe times out on a busy machine, so this used to tear down and replace
+ * a perfectly healthy daemon). Instead this trusts the state file: if its
+ * recorded bundle set already matches, assume the daemon is reachable and
+ * let the caller's own query be the real liveness test - see
+ * DaemonUnreachableError in twopass.js and its retry-with-forceRespawn use
+ * in client.js. Only forceRespawn or an actual bundle-set mismatch pays for
+ * a fresh spawn-and-wait-until-healthy cycle here.
  *
  * configDir defaults to ~/.agent-policies; tests pass an isolated scratch
  * directory so they never touch a developer's real daemon state.
  */
-async function ensureDaemon(serverUrl, bundleNames, configDir = DEFAULT_CONFIG_DIR) {
+async function ensureDaemon(serverUrl, bundleNames, configDir = DEFAULT_CONFIG_DIR, { forceRespawn = false } = {}) {
   const { socketPath, lockPath, statePath, configPath } = paths(configDir);
-
-  const alreadyHealthy = await isHealthy(socketPath);
   const state = readState(statePath);
+  const bundlesMatch = sameBundleSet(state && state.bundles, bundleNames);
 
-  if (alreadyHealthy && sameBundleSet(state && state.bundles, bundleNames)) {
+  if (!forceRespawn && bundlesMatch) {
     return true;
   }
 
@@ -234,12 +266,14 @@ async function ensureDaemon(serverUrl, bundleNames, configDir = DEFAULT_CONFIG_D
   }
 
   try {
-    if (alreadyHealthy) {
-      // Bundle selection changed since the daemon was started - it must be
-      // killed and respawned with the new config, since OPA has no HTTP
-      // shutdown/reconfigure endpoint (DELETE / is 405 Method Not Allowed).
+    if (state) {
+      // Either the bundle set changed (must respawn with new config - OPA
+      // has no HTTP shutdown/reconfigure endpoint, DELETE / is 405 Method
+      // Not Allowed) or the caller already tried this daemon and it did
+      // not respond (forceRespawn) - either way the existing process is no
+      // longer trustworthy and must go before starting a replacement.
       terminateTrackedDaemon(state);
-      await waitUntilSocketGone(socketPath, READY_TIMEOUT_MS);
+      await waitUntilProcessGone(state.pid, READY_TIMEOUT_MS);
     }
 
     writeOpaConfig(configPath, serverUrl, bundleNames);

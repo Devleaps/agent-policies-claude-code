@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { ensureDaemon, socketPathFor } = require('../../src/daemon');
-const { queryWithMultiPass, UnknownRequireKindError } = require('../../src/twopass');
+const { queryWithMultiPass, UnknownRequireKindError, DaemonUnreachableError } = require('../../src/twopass');
 const { startFixtureServer } = require('./fixture-server');
 
 let fixture;
@@ -136,6 +136,14 @@ test('a policy that is still incomplete after being given what it asked for does
   // Exactly 2 queries happened (MAX_PASSES), and the still-incomplete result
   // is dropped rather than surfaced.
   assert.deepEqual(results, []);
+});
+
+test('a missing/unreachable daemon socket throws DaemonUnreachableError rather than returning empty results', async () => {
+  const deadSocketPath = path.join(scratchDir, 'no-daemon-here.sock');
+  await assert.rejects(
+    () => queryWithMultiPass(deadSocketPath, ['measurable'], { command: 'plain-allow' }),
+    DaemonUnreachableError,
+  );
 });
 
 test('resolveRequireEntries throws UnknownRequireKindError for an unregistered kind', async () => {
