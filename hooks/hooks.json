@@ -4,9 +4,9 @@
       {
         "hooks": [
           {
-            "matcher": "*",
+            "matcher": "Bash|Edit|Write|WebFetch",
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/client.js"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/node_modules/agent-policies-adapter/bin/adapter.js --mode claude-code"
           }
         ]
       }
@@ -15,9 +15,19 @@
       {
         "hooks": [
           {
-            "matcher": "*",
+            "matcher": "Bash|Edit|Write|WebFetch",
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/client.js"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/node_modules/agent-policies-adapter/bin/adapter.js --mode claude-code"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/node_modules/agent-policies-adapter/bin/adapter.js --mode claude-code"
           }
         ]
       }

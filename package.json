@@ -1,0 +1,13 @@
+{
+  "name": "agent-policies-claude-code",
+  "version": "2.0.0",
+  "description": "Claude Code plugin that evaluates policies locally via agent-policies-adapter, syncing bundles from a central policy server.",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/hooks.test.js"
+  },
+  "dependencies": {
+    "agent-policies-adapter": "github:Devleaps/agent-policies-adapter#main"
+  }
+}
